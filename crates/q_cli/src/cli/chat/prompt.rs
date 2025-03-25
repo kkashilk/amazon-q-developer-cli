@@ -4,8 +4,8 @@ use crossterm::style::Stylize;
 use eyre::Result;
 use rustyline::completion::{
     Completer,
-    extract_word,
     FilenameCompleter,
+    extract_word,
 };
 use rustyline::error::ReadlineError;
 use rustyline::highlight::{
@@ -62,27 +62,16 @@ pub fn generate_prompt(current_profile: Option<&str>) -> String {
     "> ".to_string()
 }
 
-/// Categorized path context patterns for better organization and maintainability
-pub struct PathContextPatterns {
-    /// File operation commands (cat, ls, etc.)
-    pub file_commands: &'static [&'static str],
-    /// Words indicating file operations (open, read, etc.)
-    pub file_operations: &'static [&'static str],
-    /// Path-related terms (file, path, directory, etc.)
-    pub path_terms: &'static [&'static str],
-    /// Special commands that work with files
-    pub special_commands: &'static [&'static str],
-}
-
-impl Default for PathContextPatterns {
-    fn default() -> Self {
-        Self {
-            file_commands: &["cat ", "ls ", "cd ", "vim ", "nano ", "less ", "more ", "grep "],
-            file_operations: &["open ", "read ", "write ", "edit ", "create ", "delete ", "remove "],
-            path_terms: &["file ", "path ", "directory ", "folder ", "location "],
-            special_commands: &["/context add", "/context rm"],
-        }
-    }
+/// Complete commands that start with a slash
+fn complete_command(word: &str, start: usize) -> (usize, Vec<String>) {
+    (
+        start,
+        COMMANDS
+            .iter()
+            .filter(|p| p.starts_with(word))
+            .map(|s| (*s).to_owned())
+            .collect(),
+    )
 }
 
 /// A wrapper around FilenameCompleter that provides enhanced path detection
@@ -90,7 +79,6 @@ impl Default for PathContextPatterns {
 pub struct PathCompleter {
     /// The underlying filename completer from rustyline
     filename_completer: FilenameCompleter,
-    path_patterns: PathContextPatterns,
 }
 
 impl PathCompleter {
@@ -98,33 +86,7 @@ impl PathCompleter {
     pub fn new() -> Self {
         Self {
             filename_completer: FilenameCompleter::new(),
-            path_patterns: PathContextPatterns::default(),
         }
-    }
-
-    /// Check if the input might be referring to a file path based on context clues
-    fn is_path_context(&self, line: &str) -> bool {
-        // Check for file commands
-        let has_file_command = self.path_patterns.file_commands
-            .iter()
-            .any(|&cmd| line.contains(cmd));
-
-        // Check for file operations
-        let has_file_operation = self.path_patterns.file_operations
-            .iter()
-            .any(|&op| line.contains(op));
-
-        // Check for path terms
-        let has_path_term = self.path_patterns.path_terms
-            .iter()
-            .any(|&term| line.contains(term));
-
-        // Check for special commands
-        let has_special_command = self.path_patterns.special_commands
-            .iter()
-            .any(|&cmd| line.contains(cmd));
-
-        has_file_command || has_file_operation || has_path_term || has_special_command
     }
 
     /// Attempts to complete a file path at the given position in the line
@@ -138,27 +100,18 @@ impl PathCompleter {
         match self.filename_completer.complete(line, pos, ctx) {
             Ok((pos, completions)) => {
                 // Convert the filename completer's pairs to strings
-                let file_completions: Vec<String> = completions
-                    .iter()
-                    .map(|pair| pair.replacement.clone())
-                    .collect();
+                let file_completions: Vec<String> = completions.iter().map(|pair| pair.replacement.clone()).collect();
 
                 // Return the completions if we have any
                 Ok((pos, file_completions))
-            }
+            },
             Err(err) => Err(err),
         }
-    }
-
-    /// Checks if the word appears to be a file path based on its syntax
-    pub fn is_path_syntax(&self, word: &str) -> bool {
-        word.contains('/') || word.starts_with('~') || word.starts_with('.')
     }
 }
 
 pub struct ChatCompleter {
     path_completer: PathCompleter,
-
 }
 
 impl ChatCompleter {
@@ -166,18 +119,6 @@ impl ChatCompleter {
         Self {
             path_completer: PathCompleter::new(),
         }
-    }
-
-    /// Complete commands that start with a slash
-    fn complete_command(&self, word: &str, start: usize) -> (usize, Vec<String>) {
-        (
-            start,
-            COMMANDS
-                .iter()
-                .filter(|p| p.starts_with(word))
-                .map(|s| (*s).to_owned())
-                .collect()
-        )
     }
 }
 
@@ -194,15 +135,13 @@ impl Completer for ChatCompleter {
 
         // Handle command completion
         if word.starts_with('/') {
-            return Ok(self.complete_command(word, start));
+            return Ok(complete_command(word, start));
         }
 
-        // Handle file path completion if the word contains path separators or context suggests file paths
-        if self.path_completer.is_path_syntax(word) || self.path_completer.is_path_context(line) {
-            if let Ok((pos, completions)) = self.path_completer.complete_path(line, pos, _ctx) {
-                if !completions.is_empty() {
-                    return Ok((pos, completions));
-                }
+        // Handle file path completion as fallback
+        if let Ok((pos, completions)) = self.path_completer.complete_path(line, pos, _ctx) {
+            if !completions.is_empty() {
+                return Ok((pos, completions));
             }
         }
 
@@ -321,27 +260,5 @@ mod tests {
 
         // Verify no completions are returned for regular text
         assert!(completions.is_empty());
-    }
-
-    #[test]
-    fn test_is_path_context() {
-        let completer = PathCompleter::new();
-
-        // Test positive cases
-        assert!(completer.is_path_context("Please read file test.txt"));
-        assert!(completer.is_path_context("Show me the path to config"));
-        assert!(completer.is_path_context("List the directory contents"));
-        assert!(completer.is_path_context("/context add ./myfile.txt"));
-        assert!(completer.is_path_context("/context rm ./myfile.txt"));
-        assert!(completer.is_path_context("Can you open this file?"));
-        assert!(completer.is_path_context("Please read this for me"));
-        assert!(completer.is_path_context("cat my_file.txt"));
-        assert!(completer.is_path_context("ls -la"));
-        assert!(completer.is_path_context("cd /usr/local"));
-
-        // Test negative cases
-        assert!(!completer.is_path_context("Hello world"));
-        assert!(!completer.is_path_context("What is the weather today?"));
-        assert!(!completer.is_path_context("How do I upload data using s3 cli"));
     }
 }
