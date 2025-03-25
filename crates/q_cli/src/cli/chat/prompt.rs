@@ -5,6 +5,7 @@ use eyre::Result;
 use rustyline::completion::{
     Completer,
     extract_word,
+    FilenameCompleter,
 };
 use rustyline::error::ReadlineError;
 use rustyline::highlight::{
@@ -61,11 +62,29 @@ pub fn generate_prompt(current_profile: Option<&str>) -> String {
     "> ".to_string()
 }
 
-pub struct ChatCompleter {}
+pub struct ChatCompleter {
+    filename_completer: FilenameCompleter,
+}
 
 impl ChatCompleter {
     fn new() -> Self {
-        Self {}
+        Self {
+            filename_completer: FilenameCompleter::new(),
+        }
+    }
+
+    // Check if the input might be referring to a file path
+    fn is_path_context(&self, line: &str) -> bool {
+        // Check for common file path indicators in the input
+        line.contains("file ") ||
+        line.contains("path ") ||
+        line.contains("directory ") ||
+        line.contains("/context add") ||
+        line.contains("open ") ||
+        line.contains("read ") ||
+        line.contains("cat ") ||
+        line.contains("ls ") ||
+        line.contains("cd ")
     }
 }
 
@@ -79,18 +98,38 @@ impl Completer for ChatCompleter {
         _ctx: &Context<'_>,
     ) -> Result<(usize, Vec<Self::Candidate>), ReadlineError> {
         let (start, word) = extract_word(line, pos, None, |c| c.is_space());
-        Ok((
-            start,
-            if word.starts_with('/') {
+
+        // Handle command completion
+        if word.starts_with('/') {
+            return Ok((
+                start,
                 COMMANDS
                     .iter()
                     .filter(|p| p.starts_with(word))
                     .map(|s| (*s).to_owned())
                     .collect()
-            } else {
-                Vec::new()
-            },
-        ))
+            ));
+        }
+
+        // Handle file path completion if the word contains path separators or context suggests file paths
+        if word.contains('/') || word.starts_with('~') || self.is_path_context(line) {
+            // Use the filename completer to get path completions
+            if let Ok((pos, completions)) = self.filename_completer.complete(line, pos, _ctx) {
+                // Convert the filename completer's pairs to strings
+                let file_completions: Vec<String> = completions
+                    .iter()
+                    .map(|pair| pair.replacement.clone())
+                    .collect();
+
+                // If we have completions, return them
+                if !file_completions.is_empty() {
+                    return Ok((pos, file_completions));
+                }
+            }
+        }
+
+        // Default: no completions
+        Ok((start, Vec::new()))
     }
 }
 
