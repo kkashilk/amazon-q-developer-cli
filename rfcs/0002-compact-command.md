@@ -43,15 +43,14 @@ Amazon Q: I've compacted our conversation history, preserving the key points whi
 
 The `/compact` command supports optional parameters:
 
-- `/compact` - Default behavior, automatically determines what to compact and how
+- `/compact` - Default behavior, balances preserving previous messages and summarization
 - `/compact --aggressive [--summary]` - Maximizes context savings with more aggressive summarization
 - `/compact --conservative [--summary]` - Preserves more detail with lighter summarization
-- `/compact show` - Shows current context usage statistics
-- `/compact [--summary]` - Shows what would be compacted without actually performing the operation
+- `/compact --summary` - Shows what the compacted messages look like, without actually performing the operation
 
 ## Understanding Context Usage
 
-When users run `/compact show`, they will see:
+When users run `/usage` (new command to be added), they will see:
 - Current context usage (tokens/percentage)
 - Available context space
 - Estimated conversation turns remaining
@@ -85,6 +84,7 @@ pub enum CompactMode {
 }
 ```
 
+
 2. Extend `ConversationState` in `conversation_state.rs`:
 ```rust
 impl ConversationState {
@@ -96,55 +96,96 @@ impl ConversationState {
             CompactMode::Default => self.compact_default(),
             CompactMode::Aggressive => self.compact_aggressive(),
             CompactMode::Conservative => self.compact_conservative(),
-            CompactMode::Show => Ok(self.get_context_stats()),
         }
     }
 
-    /// Gets current context usage statistics
-    pub fn get_context_stats(&self) -> CompactionStats {
-        CompactionStats {
-            current_tokens: self.estimate_token_count(),
-            max_tokens: MAX_CONVERSATION_STATE_HISTORY_LEN,
-            remaining_turns: self.estimate_remaining_turns(),
-        }
-    }
-}
-
-pub struct CompactionStats {
-    pub current_tokens: usize,
-    pub max_tokens: usize,
-    pub remaining_turns: usize,
 }
 ```
 
-3. Add compaction strategies:
+3. Add compaction strategies and configuration:
 ```rust
+/// Configuration for conversation compaction
+#[derive(Debug, Clone)]
+pub struct CompactionConfig {
+    /// Number of recent messages to keep unchanged
+    pub keep_recent: usize,
+    /// Level of detail to preserve in the summary
+    pub detail_level: DetailLevel,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DetailLevel {
+    Minimal,   // Very concise, focus only on critical information
+    Standard,  // Balanced approach with moderate detail
+    Detailed,  // Preserve more nuance and context
+}
+
 impl ConversationState {
     fn compact_default(&mut self) -> Result<CompactionStats> {
-        // Keep last 5 exchanges, summarize older ones
+        // Keep last 5 exchanges, use standard summarization
         self.compact_with_config(CompactionConfig {
             keep_recent: 5,
-            summarize_threshold: 0.7,
+            detail_level: DetailLevel::Standard,
         })
     }
 
     fn compact_aggressive(&mut self) -> Result<CompactionStats> {
-        // Keep last 3 exchanges, heavily summarize older ones
+        // Keep last 3 exchanges, use minimal summarization
         self.compact_with_config(CompactionConfig {
             keep_recent: 3,
-            summarize_threshold: 0.9,
+            detail_level: DetailLevel::Minimal,
         })
     }
 
     fn compact_conservative(&mut self) -> Result<CompactionStats> {
-        // Keep last 8 exchanges, lightly summarize older ones
+        // Keep last 8 exchanges, use detailed summarization
         self.compact_with_config(CompactionConfig {
             keep_recent: 8,
-            summarize_threshold: 0.5,
+            detail_level: DetailLevel::Detailed,
         })
     }
 }
+
+## Compaction Implementation
+
+The core of the implementation is the `compact_with_config` method, which:
+
+1. Preserves recent messages based on the configuration
+2. Identifies and preserves messages with tool uses/results
+3. Summarizes the remaining messages using Amazon Q
+4. Creates a new conversation history with the summary and preserved messages
+5. Returns statistics about the compaction process
+
+The implementation will carefully handle edge cases such as empty conversations and ensure that important context (like tool executions) is never lost during compaction.
+
+## Summarization Approach
+
+The summarization uses different detail levels to control how concise or comprehensive the summary should be:
+
+```rust
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DetailLevel {
+    Minimal,   // Very concise, focus only on critical information
+    Standard,  // Balanced approach with moderate detail
+    Detailed,  // Preserve more nuance and context
+}
 ```
+
+Each detail level corresponds to different instructions sent to the model:
+
+- **Minimal**: "Be extremely concise, focusing only on the most critical information. Prioritize brevity over detail, but ensure all key points are captured."
+
+- **Standard**: "Create a balanced summary that preserves important details while being concise. Include key questions, answers, and decisions."
+
+- **Detailed**: "Create a comprehensive summary that preserves nuance and context. Include most significant details while still condensing the conversation."
+
+All prompts include instructions to focus on:
+1. Key questions asked by the user
+2. Important information provided by the assistant
+3. Any decisions or conclusions reached
+4. Specific technologies, services, or code concepts
+5. Preserving essential code snippets
+
 
 4. Handle special content:
 ```rust
