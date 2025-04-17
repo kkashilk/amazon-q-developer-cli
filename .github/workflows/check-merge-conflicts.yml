@@ -1,0 +1,56 @@
+name: Check Merge Conflicts
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  check-merge-conflicts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Check if PR is against main branch
+        id: check-target-branch
+        run: |
+          TARGET_BRANCH="${{ github.base_ref }}"
+          if [[ "$TARGET_BRANCH" == "main" ]]; then
+            echo "PR is against main branch, no need to check for conflicts"
+            echo "is_main=true" >> $GITHUB_OUTPUT
+          else
+            echo "PR is not against main branch, will check for conflicts"
+            echo "is_main=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check for merge conflicts with main
+        if: steps.check-target-branch.outputs.is_main == 'false'
+        id: check-conflicts
+        run: |
+          # Check if SKIP_CONFLICT_CHECK is set
+          if [[ "${{ contains(github.event.pull_request.labels.*.name, 'skip-conflict-check') }}" == "true" ]]; then
+            echo "Skipping conflict check due to skip-conflict-check label"
+            exit 0
+          fi
+          
+          # Fetch main branch
+          git fetch origin main:main
+          
+          # Try to merge main into the current branch
+          if git merge main --no-commit --no-ff; then
+            echo "No merge conflicts detected"
+            # Abort the merge since we're just checking
+            git merge --abort
+          else
+            echo "Merge conflicts detected!"
+            # Abort the merge
+            git merge --abort
+            echo "::error::This branch has merge conflicts with main. Please pull from main and rebase your branch before creating a PR. If you need to bypass this check, add the 'skip-conflict-check' label to your PR."
+            exit 1
+          fi
+
+      - name: Success message
+        if: success()
+        run: echo "No merge conflicts detected or PR is against main branch"
