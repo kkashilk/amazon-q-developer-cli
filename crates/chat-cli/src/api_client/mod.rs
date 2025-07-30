@@ -5,6 +5,7 @@ mod error;
 pub mod model;
 mod opt_out;
 pub mod profile;
+mod retry_classifier;
 pub mod send_message_output;
 
 use std::sync::Arc;
@@ -18,6 +19,7 @@ use amzn_codewhisperer_client::types::{
     TelemetryEvent,
     UserContext,
 };
+
 use amzn_codewhisperer_streaming_client::Client as CodewhispererStreamingClient;
 use amzn_qdeveloper_streaming_client::Client as QDeveloperStreamingClient;
 use amzn_qdeveloper_streaming_client::types::Origin;
@@ -36,7 +38,6 @@ use tracing::{
     debug,
     error,
 };
-
 use crate::api_client::credentials::CredentialsChain;
 use crate::api_client::model::{
     ChatResponseStream,
@@ -147,6 +148,7 @@ impl ApiClient {
                     .app_name(app_name())
                     .endpoint_url(endpoint.url())
                     .stalled_stream_protection(stalled_stream_protection_config())
+                    .retry_classifier(retry_classifier::QCliRetryClassifier::new())
                     .build(),
                 ));
             },
@@ -160,6 +162,7 @@ impl ApiClient {
                         .app_name(app_name())
                         .endpoint_url(endpoint.url())
                         .stalled_stream_protection(stalled_stream_protection_config())
+                        .retry_classifier(retry_classifier::QCliRetryClassifier::new())
                         .build(),
                 ));
             },
@@ -496,7 +499,8 @@ fn timeout_config(database: &Database) -> TimeoutConfig {
 }
 
 fn retry_config() -> RetryConfig {
-    RetryConfig::standard().with_max_attempts(1)
+    RetryConfig::adaptive()
+        .with_max_attempts(3)
 }
 
 pub fn stalled_stream_protection_config() -> StalledStreamProtectionConfig {
