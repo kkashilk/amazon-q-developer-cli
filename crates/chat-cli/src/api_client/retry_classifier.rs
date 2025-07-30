@@ -1,8 +1,11 @@
+use std::fmt;
+
 use aws_smithy_runtime_api::client::interceptors::context::InterceptorContext;
 use aws_smithy_runtime_api::client::retries::classifiers::{
-    ClassifyRetry, RetryAction, RetryClassifierPriority,
+    ClassifyRetry,
+    RetryAction,
+    RetryClassifierPriority,
 };
-use std::fmt;
 use tracing::debug;
 
 /// Error marker for monthly limit exceeded errors
@@ -48,7 +51,10 @@ impl QCliRetryClassifier {
         // Check status code first - monthly limit errors typically return 429 (Too Many Requests)
         let status_code = resp.status().as_u16();
         if status_code != 429 {
-            debug!("QCliRetryClassifier: Status code {} is not 429, not a monthly limit error", status_code);
+            debug!(
+                "QCliRetryClassifier: Status code {} is not 429, not a monthly limit error",
+                status_code
+            );
             return false;
         }
 
@@ -62,7 +68,7 @@ impl QCliRetryClassifier {
             Err(e) => {
                 debug!("QCliRetryClassifier: Failed to parse response body as UTF-8: {}", e);
                 false
-            }
+            },
         }
     }
 
@@ -80,7 +86,6 @@ impl QCliRetryClassifier {
 
 impl ClassifyRetry for QCliRetryClassifier {
     fn classify_retry(&self, ctx: &InterceptorContext) -> RetryAction {
-
         // Check for monthly limit error first - this should never be retried
         if Self::is_monthly_limit_error(ctx) {
             debug!("QCliRetryClassifier: Monthly limit error detected - returning RetryForbidden");
@@ -114,10 +119,14 @@ impl fmt::Display for QCliRetryClassifier {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use aws_smithy_runtime_api::client::interceptors::context::{Input, InterceptorContext};
+    use aws_smithy_runtime_api::client::interceptors::context::{
+        Input,
+        InterceptorContext,
+    };
     use aws_smithy_types::body::SdkBody;
     use http::Response;
+
+    use super::*;
 
     #[test]
     fn test_monthly_limit_error_classification() {
@@ -131,7 +140,7 @@ mod tests {
             .body(response_body)
             .unwrap()
             .map(SdkBody::from);
-        
+
         ctx.set_response(response.try_into().unwrap());
 
         let result = classifier.classify_retry(&ctx);
@@ -150,7 +159,7 @@ mod tests {
             .body(response_body)
             .unwrap()
             .map(SdkBody::from);
-        
+
         ctx.set_response(response.try_into().unwrap());
 
         let result = classifier.classify_retry(&ctx);
